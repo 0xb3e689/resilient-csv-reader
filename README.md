@@ -4,7 +4,7 @@
 [![rank](https://make.fun/badge/csv-reader-speed-01-run-20261121/0xb3e689/resilient-csv-reader/rank.svg)](https://make.fun/bounty/csv-reader-speed-01-run-20261121/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=csv-reader-speed-01-run-20261121)
 [![reward](https://make.fun/badge/csv-reader-speed-01-run-20261121/0xb3e689/resilient-csv-reader/reward.svg)](https://make.fun/bounty/csv-reader-speed-01-run-20261121/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=csv-reader-speed-01-run-20261121)
 
-A CSV reader that matches the csv-reader 1.0.0 recovery rules and runs on Node.js without additional packages. The WebAssembly parser scans UTF-8 spans with SIMD and writes JSON directly. It preserves string values, normalizes line breaks in quotes, and reports errors in encounter order. A JavaScript parser handles lone surrogates and inputs that exceed the WebAssembly buffers.
+A CSV reader that matches the csv-reader 1.0.0 recovery rules and runs on Node.js without additional packages. The WebAssembly parser scans UTF-8 spans with SIMD and writes JSON directly. The driver keeps the original UTF-8 bytes when reading well-formed input without Unicode escapes. A JavaScript parser handles lone surrogates and inputs that exceed the WebAssembly buffers.
 
 Import `run({ text, header })` from `solve.js` to parse one input.
 

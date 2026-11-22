@@ -63,3 +63,11 @@ test('recovers all errors when an output exceeds the WASM scratch limit', () => 
   assert.equal(json, JSON.stringify(expected));
   assert.deepEqual(run(input), expected);
 });
+
+test('passes raw UTF-8 bytes through JSON decoding and CSV parsing', () => {
+  const input = { text: '\uFEFF東京,🌊\r\n' + '\r'.repeat(100) + 'café,雪', header: true };
+  const byteInput = JSON.parse(Buffer.from(JSON.stringify(input)).toString('latin1'));
+  let json = '';
+  run(byteInput, (bytes) => { json += bytes.toString('utf8'); }, 'latin1');
+  assert.equal(json, JSON.stringify(run(input)));
+});
