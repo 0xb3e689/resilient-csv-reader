@@ -1,5 +1,5 @@
 const { isUtf8 } = require('node:buffer');
-const { closeSync, fstatSync, openSync, readFileSync, readSync } = require('node:fs');
+const { closeSync, fstatSync, openSync, readFileSync, readSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 
 const rawInput = Symbol('CSV byte offsets');
@@ -107,4 +107,24 @@ function readCases(path) {
   }
 }
 
-module.exports = { run, readCases };
+function main() {
+  require('node:v8').setFlagsFromString('--no-incremental-marking --liftoff-only');
+  const input = process.env.MAKEFUN_INPUT_DIR ?? '/input';
+  const output = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+  const { cases, encoding } = readCases(join(input, 'cases.json'));
+
+  const file = openSync(join(output, 'answers.json'), 'w');
+  const write = (bytes) => writeFileSync(file, bytes);
+  try {
+    write('[');
+    for (let i = 0; i < cases.length; i++) {
+      if (i > 0) write(',');
+      run(cases[i].input, write, encoding);
+    }
+    write(']');
+  } finally {
+    closeSync(file);
+  }
+}
+
+module.exports = { main, run, readCases };

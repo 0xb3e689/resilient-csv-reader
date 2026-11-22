@@ -77,13 +77,17 @@ static void escape_byte(Writer *w, Byte ch) {
     }
 }
 
+static inline v128_t json_specials(v128_t data) {
+    return wasm_v128_or(wasm_u8x16_lt(data, wasm_i8x16_splat(32)),
+        wasm_v128_or(wasm_i8x16_eq(data, wasm_i8x16_splat('"')),
+                     wasm_i8x16_eq(data, wasm_i8x16_splat('\\'))));
+}
+
 // The caller reserves 16 bytes past the input so a final SIMD load is safe.
 static inline const Byte *ordinary(const Byte *p, const Byte *end, int unquoted) {
     while (p < end) {
         const v128_t data = wasm_v128_load(p);
-        v128_t special = wasm_v128_or(wasm_u8x16_lt(data, wasm_i8x16_splat(32)),
-            wasm_v128_or(wasm_i8x16_eq(data, wasm_i8x16_splat('"')),
-                         wasm_i8x16_eq(data, wasm_i8x16_splat('\\'))));
+        v128_t special = json_specials(data);
         if (unquoted) special = wasm_v128_or(special, wasm_i8x16_eq(data, wasm_i8x16_splat(',')));
         const unsigned mask = wasm_i8x16_bitmask(special);
         if (mask) {
@@ -158,6 +162,30 @@ unsigned parse(const Byte *p, unsigned len, int header, Byte *data, unsigned dat
         literal(&out, "[");
 
         do {
+            if (end - p >= 16 && out.limit - out.at >= 80) {
+                const Byte *block = p;
+                const v128_t bytes = wasm_v128_load(block);
+                const unsigned special = wasm_i8x16_bitmask(json_specials(bytes));
+                const unsigned plain = (1u << __builtin_ctz(special | 0x10000u)) - 1;
+                unsigned commas = wasm_i8x16_bitmask(wasm_i8x16_eq(bytes, wasm_i8x16_splat(','))) & plain;
+                if (commas) {
+                    // The reservation covers punctuation and a full speculative store per field.
+                    do {
+                        const Byte *comma = block + __builtin_ctz(commas);
+                        if (width && fields == width) extra = out.at;
+                        if (fields++) *out.at++ = ',';
+                        *out.at++ = '"';
+                        wasm_v128_store(out.at, wasm_v128_load(p));
+                        out.at += comma - p;
+                        *out.at++ = '"';
+                        has_value |= comma != p;
+                        p = comma + 1;
+                        commas &= commas - 1;
+                    } while (commas);
+                    more = 1;
+                    continue;
+                }
+            }
             if (width && fields == width) extra = out.at;
             if (fields++) literal(&out, ",");
             literal(&out, "\"");

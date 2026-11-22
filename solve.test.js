@@ -104,3 +104,15 @@ test('handles Unicode escapes and alternate JSON layouts and rejects invalid inp
   const invalid = String.raw`[{"id":"case","input":{"text":"bad\q","header":false}}]`;
   assert.throws(() => parseDocument(invalid), SyntaxError);
 });
+
+test('keeps row width across SIMD blocks with empty and quoted fields', () => {
+  const input = {
+    text: 'h,i,j\nA,B,C,D,E,F,,G,"h""i",j,k\n,,\n123456789012345,x,y\n',
+    header: true,
+  };
+  assert.deepEqual(run(input), {
+    columns: ['h', 'i', 'j'],
+    rows: [['A', 'B', 'C'], ['', '', ''], ['123456789012345', 'x', 'y']],
+    errors: [{ code: 'long_row', line: 2, row: 0, extra: ['D', 'E', 'F', '', 'G', 'h"i', 'j', 'k'] }],
+  });
+});
