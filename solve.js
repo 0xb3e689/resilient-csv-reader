@@ -1,97 +1,43 @@
-const quotedEscapes = /""|\r\n?|\n/g;
+import { readFileSync } from 'node:fs';
+import { readCsv } from './fallback.js';
 
-/** Read CSV using the csv-reader 1.0.0 rules for malformed fields and rows. */
-export function run(input) {
+const wasmURL = new URL('./reader.wasm', import.meta.url);
+let reader;
+
+/** Return the parsed result, or stream its JSON to a synchronous sink that consumes each chunk immediately. */
+export function run(input, write) {
   const text = String(input.text);
   const header = input.header === true;
-  const length = text.length;
-  const rows = [];
-  const errors = [];
-  let columns = null;
-  let width = 0;
-  let line = 1;
-  let pos = text.charCodeAt(0) === 0xfeff ? 1 : 0;
 
-  function unescape(match) {
-    if (match === '""') return '"';
-    line++;
-    return '\n';
+  if (text.length <= 8 * 1024 * 1024 && text.isWellFormed()) {
+    reader ??= new WebAssembly.Instance(new WebAssembly.Module(readFileSync(wasmURL))).exports;
+    const { memory, parse, errors_size, __heap_base } = reader;
+    const inputStart = __heap_base.value;
+    const inputCapacity = 3 * text.length;
+    const rowStart = inputStart + inputCapacity + 16;
+    const rowCapacity = 3 * inputCapacity + 64;
+    const errorStart = rowStart + rowCapacity;
+    const errorCapacity = inputCapacity + 1024;
+    const needed = errorStart + errorCapacity - memory.buffer.byteLength;
+    if (needed > 0) memory.grow(Math.ceil(needed / 65536));
+
+    const bytes = Buffer.from(memory.buffer);
+    const length = bytes.write(text, inputStart, inputCapacity, 'utf8');
+    const rowsSize = parse(inputStart, length, +header, rowStart, rowCapacity, errorStart, errorCapacity);
+    if (rowsSize) {
+      const rows = bytes.subarray(rowStart, rowStart + rowsSize);
+      const errors = bytes.subarray(errorStart, errorStart + errors_size());
+      if (write) {
+        write(rows);
+        write(errors);
+        return;
+      }
+      return JSON.parse(rows.toString('utf8') + errors.toString('utf8'));
+    }
   }
 
-  while (pos < length) {
-    const recordLine = line;
-    const row = header && columns === null ? null : rows.length;
-    const fields = [];
-    let quoted;
-    let end;
-
-    do {
-      let start = pos;
-      let value = '';
-      quoted = text.charCodeAt(pos) === 34;
-      let closed = false;
-      if (quoted) {
-        const firstQuote = text.indexOf('"', pos + 1);
-        let quote = firstQuote;
-        while (quote !== -1 && text.charCodeAt(quote + 1) === 34) {
-          quote = text.indexOf('"', quote + 2);
-        }
-
-        if (quote === -1) {
-          errors.push({ code: 'unterminated_quote', line: recordLine, row });
-        } else {
-          value = text.slice(pos + 1, quote);
-          if (quote !== firstQuote || value.includes('\n') || value.includes('\r')) {
-            value = value.replace(quotedEscapes, unescape);
-          }
-          start = pos = quote + 1;
-          closed = true;
-        }
-      }
-
-      let kept = false;
-      for (;;) {
-        while (pos < length) {
-          end = text.charCodeAt(pos);
-          if (end === 44 || end === 10 || end === 13) break;
-          pos++;
-        }
-        if (pos > start) {
-          value += text.slice(start, pos);
-          kept = true;
-        }
-        if (pos === length) {
-          end = -1;
-          break;
-        }
-        if (end !== 13 || text.charCodeAt(pos + 1) === 10) break;
-        errors.push({ code: 'stray_cr', line: recordLine, row });
-        start = ++pos;
-      }
-      if (closed && kept) errors.push({ code: 'quote_junk', line: recordLine, row });
-      fields.push(value);
-
-      if (end === 44) pos++;
-      else if (end !== -1) {
-        pos += end === 13 ? 2 : 1;
-        line++;
-      }
-    } while (end === 44);
-
-    if (fields.length === 1 && fields[0] === '' && !quoted) continue;
-    if (width === 0) width = fields.length;
-    if (row === null) {
-      columns = fields;
-      continue;
-    }
-    if (fields.length < width) {
-      errors.push({ code: 'short_row', line: recordLine, row, fields: fields.length });
-      while (fields.length < width) fields.push('');
-    } else if (fields.length > width) {
-      errors.push({ code: 'long_row', line: recordLine, row, extra: fields.splice(width) });
-    }
-    rows.push(fields);
-  }
-
-  return { columns: header ? columns ?? [] : null, rows, errors };
+  // The string parser preserves lone surrogates and handles results larger than the scratch buffers.
+  const result = readCsv({ text, header });
+  if (write) write(Buffer.from(JSON.stringify(result)));
+  else return result;
 }
