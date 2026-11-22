@@ -4,7 +4,7 @@
 [![rank](https://make.fun/badge/csv-reader-speed-01-run-20261121/0xb3e689/resilient-csv-reader/rank.svg)](https://make.fun/bounty/csv-reader-speed-01-run-20261121/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=csv-reader-speed-01-run-20261121)
 [![reward](https://make.fun/badge/csv-reader-speed-01-run-20261121/0xb3e689/resilient-csv-reader/reward.svg)](https://make.fun/bounty/csv-reader-speed-01-run-20261121/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=csv-reader-speed-01-run-20261121)
 
-A CSV reader that matches the csv-reader 1.0.0 recovery rules and runs on Node.js without additional packages. The WebAssembly parser scans UTF-8 spans with SIMD and writes JSON directly. The driver keeps the original UTF-8 bytes when reading well-formed input without Unicode escapes. A JavaScript parser handles lone surrogates and inputs that exceed the WebAssembly buffers.
+A CSV reader that matches the csv-reader 1.0.0 recovery rules and runs on Node.js without additional packages. The CommonJS driver reads compact case JSON directly into WebAssembly memory and decodes the CSV strings in place. The same module scans those strings with SIMD and writes JSON directly. Other JSON layouts use Node's JSON parser. A JavaScript CSV parser handles lone surrogates and inputs that exceed the WebAssembly buffers.
 
 Import `run({ text, header })` from `solve.js` to parse one input.
 
@@ -26,7 +26,8 @@ The repository includes `reader.wasm`. To rebuild it from `reader.c`, use Clang 
 
 ```sh
 clang --target=wasm32 -Oz -msimd128 -ffreestanding -fno-builtin -c reader.c -o /tmp/csv-reader.o
-wasm-ld --no-entry --export=parse --export=errors_size --export=__heap_base --strip-all /tmp/csv-reader.o -o reader.wasm
+wasm-ld --no-entry --export=parse --export=errors_size --export=__heap_base \
+  --export=decode_cases --export=cases_offset --strip-all /tmp/csv-reader.o -o reader.wasm
 ```
 
 ---

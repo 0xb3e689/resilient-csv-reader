@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { run } from './solve.js';
+import runner from './runner.cjs';
 
 test('repairs broken rows in encounter order and tracks physical lines', () => {
   const text = '\uFEFF\r\nname,note\r\n"東京","a\rb\r\nc\n"\r!\nshort\nlong,ok,extra\r\n"open,end';
@@ -70,4 +74,33 @@ test('passes raw UTF-8 bytes through JSON decoding and CSV parsing', () => {
   let json = '';
   run(byteInput, (bytes) => { json += bytes.toString('utf8'); }, 'latin1');
   assert.equal(json, JSON.stringify(run(input)));
+});
+
+function parseDocument(source) {
+  const dir = mkdtempSync(join(tmpdir(), 'csv-cases-'));
+  try {
+    const path = join(dir, 'cases.json');
+    writeFileSync(path, source);
+    const { cases, encoding } = runner.readCases(path);
+    return cases.map(({ input }) => run(input, undefined, encoding));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('decodes compact JSON case strings with escapes and retains batch order', () => {
+  const inputs = [
+    { text: '名,note\r\n東京,"say ""hi""\r\n🌊"\r\n', header: true },
+    { text: '\\path,/text,\t\b\f\r\n', header: false },
+    { text: '', header: true },
+  ];
+  const cases = inputs.map((input, id) => ({ id: `case-\"-${id}`, input }));
+  assert.deepEqual(parseDocument(JSON.stringify(cases)), inputs.map((input) => run(input)));
+});
+
+test('handles Unicode escapes and alternate JSON layouts and rejects invalid input', () => {
+  const source = String.raw`[ {"input":{"header":false,"text":"\ud800,\u00e9"},"id":"case"} ]`;
+  assert.deepEqual(parseDocument(source), [run({ text: '\ud800,é', header: false })]);
+  const invalid = String.raw`[{"id":"case","input":{"text":"bad\q","header":false}}]`;
+  assert.throws(() => parseDocument(invalid), SyntaxError);
 });

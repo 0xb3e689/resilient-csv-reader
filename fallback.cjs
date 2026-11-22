@@ -1,7 +1,7 @@
 const quotedEscapes = /""|\r\n?|\n/g;
 
 /** Read CSV using the csv-reader 1.0.0 rules for malformed fields and rows. */
-export function readCsv(input) {
+function readCsv(input) {
   const text = String(input.text);
   const header = input.header === true;
   const length = text.length;
@@ -95,3 +95,5 @@ export function readCsv(input) {
 
   return { columns: header ? columns ?? [] : null, rows, errors };
 }
+
+module.exports = readCsv;

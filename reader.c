@@ -12,14 +12,16 @@ typedef struct {
 
 static unsigned error_bytes;
 
-// Freestanding WebAssembly needs its own variable-width copy.
-void *memcpy(void *dst, const void *src, size_t len) {
-    Byte *out = dst;
-    const Byte *in = src;
+static void copy_forward(Byte *out, const Byte *in, size_t len) {
     for (; len >= 16; len -= 16, out += 16, in += 16) {
         wasm_v128_store(out, wasm_v128_load(in));
     }
     for (; len; --len) *out++ = *in++;
+}
+
+// Freestanding WebAssembly needs its own variable-width copy.
+void *memcpy(void *dst, const void *src, size_t len) {
+    copy_forward(dst, src, len);
     return dst;
 }
 
@@ -239,3 +241,71 @@ unsigned parse(const Byte *p, unsigned len, int header, Byte *data, unsigned dat
 }
 
 unsigned errors_size(void) { return error_bytes; }
+
+// Each entry stores the linear-memory offset, decoded byte length, and header flag.
+static uint32_t case_table[256][3];
+
+static int json_token(Byte **p, const Byte *end, const char *token, size_t len) {
+    if ((size_t)(end - *p) < len) return 0;
+    for (size_t i = 0; i < len; ++i) {
+        if ((*p)[i] != (Byte)token[i]) return 0;
+    }
+    *p += len;
+    return 1;
+}
+
+#define TOKEN(s) json_token(&p, end, (s), sizeof(s) - 1)
+
+// Decode in place, keeping each output span at or before its source.
+static Byte *json_string(Byte *p, const Byte *end, uint32_t *size) {
+    Byte *start = p, *out = p;
+    while (p < end) {
+        Byte *stop = (Byte *)ordinary(p, end, 0);
+        if (out != p) copy_forward(out, p, (size_t)(stop - p));
+        out += stop - p;
+        p = stop;
+        if (p == end) break;
+        if (*p == '"') {
+            *size = (uint32_t)(out - start);
+            return p + 1;
+        }
+        if (*p++ != '\\' || p == end) break;
+        switch (*p++) {
+            case '"': *out++ = '"'; break;
+            case '\\': *out++ = '\\'; break;
+            case '/': *out++ = '/'; break;
+            case 'b': *out++ = '\b'; break;
+            case 'f': *out++ = '\f'; break;
+            case 'n': *out++ = '\n'; break;
+            case 'r': *out++ = '\r'; break;
+            case 't': *out++ = '\t'; break;
+            default: return NULL;
+        }
+    }
+    return NULL;
+}
+
+int decode_cases(Byte *p, unsigned len) {
+    const Byte *end = p + len;
+    unsigned count = 0;
+    if (!TOKEN("[")) return -1;
+    if (TOKEN("]")) return p == end ? 0 : -1;
+    do {
+        uint32_t ignored;
+        if (count == sizeof(case_table) / sizeof(*case_table) || !TOKEN("{\"id\":\"")) return -1;
+        p = json_string(p, end, &ignored);
+        if (!p || !TOKEN(",\"input\":{\"text\":\"")) return -1;
+        const uintptr_t start = (uintptr_t)p;
+        uint32_t size;
+        p = json_string(p, end, &size);
+        if (!p || size > 8 * 1024 * 1024 || !TOKEN(",\"header\":")) return -1;
+        unsigned header = TOKEN("true");
+        if ((!header && !TOKEN("false")) || !TOKEN("}}")) return -1;
+        case_table[count][0] = (uint32_t)start;
+        case_table[count][1] = size;
+        case_table[count++][2] = header;
+    } while (TOKEN(","));
+    return TOKEN("]") && p == end ? (int)count : -1;
+}
+
+const uint32_t *cases_offset(void) { return case_table[0]; }
